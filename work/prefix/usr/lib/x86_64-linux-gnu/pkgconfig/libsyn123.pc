@@ -1,0 +1,12 @@
+prefix=/home/cat/gsb/uid3557/work/prefix/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include/x86_64-linux-gnu
+
+Name: libsyn123
+Description: A signal synthesis library accompanying mpg123
+Requires: 
+Version: 1.33.3
+Libs: -L${libdir} -lsyn123 
+Libs.private: -lm
+Cflags: -I${includedir} 

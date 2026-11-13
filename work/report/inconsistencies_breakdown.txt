@@ -1,0 +1,31 @@
+by reference error:
+    40  Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).
+    39  libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.
+     1  reference produced no frames (metadata/early stream failure)
+     1  Failed to read metadata with libFLAC.
+     1  libFLAC reported an MD5 mismatch.
+     1  libmpg123 returned more PCM frames than dr_mp3.
+     1  Failed to open with libsndfile: Error in WAV file. No 'data' chunk marker..
+
+by mutation class:
+    20  splice
+    18  zero
+    16  truncate
+    13  header
+     9  append
+     8  bitflip
+
+by format x mutation:
+     3  flac  append
+     4  flac  bitflip
+     8  flac  header
+     8  flac  splice
+     8  flac  truncate
+    11  flac  zero
+     5  mp3   append
+     4  mp3   bitflip
+     5  mp3   header
+    12  mp3   splice
+     8  mp3   truncate
+     7  mp3   zero
+     1  wav   append

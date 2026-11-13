@@ -1,0 +1,9 @@
+Document: libsndfile
+Title: Debian libsndfile Manual
+Author: Erik de Castro Lopo <erikd@mega-nerd.com>
+Abstract: Programming manual and examples for the libsndfile library.
+Section: Programming
+
+Format: Text
+Index: /usr/share/doc/libsndfile1-dev/markdown/index.md.gz
+Files: /usr/share/doc/libsndfile1-dev/markdown/*.md*

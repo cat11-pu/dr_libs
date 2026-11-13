@@ -1,0 +1,12 @@
+prefix=/home/cat/gsb/uid3557/work/prefix/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include/x86_64-linux-gnu
+
+Name: libmpg123
+Description: An optimised MPEG Audio decoder
+Requires: 
+Version: 1.33.3
+Libs: -L${libdir} -lmpg123 
+Libs.private: -lm 
+Cflags: -I${includedir} 

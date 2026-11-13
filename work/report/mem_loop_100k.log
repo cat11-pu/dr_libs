@@ -1,0 +1,8 @@
+iter=25000 live_allocs=0 live_bytes=0 (delta_vs_iter1: allocs=+0 bytes=+0) total_allocs=50000
+iter=50000 live_allocs=0 live_bytes=0 (delta_vs_iter1: allocs=+0 bytes=+0) total_allocs=100000
+iter=100000 live_allocs=0 live_bytes=0 (delta_vs_iter1: allocs=+0 bytes=+0) total_allocs=200000
+peak_live_bytes=65536 decode_failures=0
+
+real	0m50.115s
+user	0m47.357s
+sys	0m2.664s

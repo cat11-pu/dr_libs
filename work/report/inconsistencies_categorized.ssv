@@ -1,0 +1,85 @@
+# format; index; mutation; reference_error; path
+flac; 00016; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00016_00116.flac
+flac; 00024; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00024_00172.flac
+flac; 00028; bitflip; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00028_00200.flac
+flac; 00030; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00030_00214.flac
+flac; 00033; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00033_00235.flac
+flac; 00034; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00034_00242.flac
+flac; 00044; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00044_00312.flac
+flac; 00052; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00052_00368.flac
+flac; 00056; bitflip; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00056_00396.flac
+flac; 00081; header; reference produced no frames (metadata/early stream failure); corpus/malformed/flac/00081_00571.flac
+flac; 00082; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00082_00578.flac
+flac; 00087; bitflip; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00087_00613.flac
+flac; 00088; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00088_00620.flac
+flac; 00101; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00101_00711.flac
+flac; 00103; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00103_00725.flac
+flac; 00107; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00107_00753.flac
+flac; 00110; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00110_00774.flac
+flac; 00118; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00118_00830.flac
+flac; 00124; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00124_00872.flac
+flac; 00136; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00136_00956.flac
+flac; 00143; header; Failed to read metadata with libFLAC.; corpus/malformed/flac/00143_01005.flac
+flac; 00145; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00145_01019.flac
+flac; 00154; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00154_01082.flac
+flac; 00165; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00165_01159.flac
+flac; 00167; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00167_01173.flac
+flac; 00175; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00175_01229.flac
+flac; 00197; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00197_01383.flac
+flac; 00206; append; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00206_01446.flac
+flac; 00207; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00207_01453.flac
+flac; 00211; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00211_01481.flac
+flac; 00231; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00231_01621.flac
+flac; 00235; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00235_01649.flac
+flac; 00242; bitflip; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00242_01698.flac
+flac; 00243; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00243_01705.flac
+flac; 00247; header; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00247_01733.flac
+flac; 00251; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00251_01761.flac
+flac; 00252; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00252_01768.flac
+flac; 00261; append; libFLAC reported an MD5 mismatch.; corpus/malformed/flac/00261_01831.flac
+flac; 00265; append; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00265_01859.flac
+flac; 00269; zero; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00269_01887.flac
+flac; 00274; truncate; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00274_01922.flac
+flac; 00294; splice; libFLAC decoding error: FLAC__STREAM_DECODER_ERROR_STATUS_LOST_SYNC.; corpus/malformed/flac/00294_02062.flac
+mp3; 00000; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00000_00003.mp3
+mp3; 00008; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00008_00059.mp3
+mp3; 00015; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00015_00108.mp3
+mp3; 00020; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00020_00143.mp3
+mp3; 00022; bitflip; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00022_00157.mp3
+mp3; 00023; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00023_00164.mp3
+mp3; 00050; append; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00050_00353.mp3
+mp3; 00058; bitflip; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00058_00409.mp3
+mp3; 00061; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00061_00430.mp3
+mp3; 00064; splice; libmpg123 returned more PCM frames than dr_mp3.; corpus/malformed/mp3/00064_00451.mp3
+mp3; 00068; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00068_00479.mp3
+mp3; 00070; append; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00070_00493.mp3
+mp3; 00079; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00079_00556.mp3
+mp3; 00080; header; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00080_00563.mp3
+mp3; 00098; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00098_00689.mp3
+mp3; 00125; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00125_00878.mp3
+mp3; 00135; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00135_00948.mp3
+mp3; 00137; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00137_00962.mp3
+mp3; 00140; bitflip; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00140_00983.mp3
+mp3; 00144; append; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00144_01011.mp3
+mp3; 00158; header; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00158_01109.mp3
+mp3; 00159; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00159_01116.mp3
+mp3; 00174; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00174_01221.mp3
+mp3; 00176; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00176_01235.mp3
+mp3; 00177; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00177_01242.mp3
+mp3; 00190; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00190_01333.mp3
+mp3; 00203; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00203_01424.mp3
+mp3; 00209; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00209_01466.mp3
+mp3; 00222; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00222_01557.mp3
+mp3; 00232; header; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00232_01627.mp3
+mp3; 00233; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00233_01634.mp3
+mp3; 00239; header; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00239_01676.mp3
+mp3; 00246; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00246_01725.mp3
+mp3; 00252; truncate; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00252_01767.mp3
+mp3; 00253; bitflip; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00253_01774.mp3
+mp3; 00260; header; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00260_01823.mp3
+mp3; 00264; append; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00264_01851.mp3
+mp3; 00281; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00281_01970.mp3
+mp3; 00285; append; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00285_01998.mp3
+mp3; 00296; zero; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00296_02075.mp3
+mp3; 00299; splice; Failed to decode with libmpg123: Failed to find valid MPEG data within limit on resync. (code 28).; corpus/malformed/mp3/00299_02096.mp3
+wav; 00255; append; Failed to open with libsndfile: Error in WAV file. No 'data' chunk marker..; corpus/malformed/wav/00255_01788.wav

@@ -1,0 +1,10 @@
+malformed files: 1000
+match        : 848
+stricter     : 68
+inconsistent : 84
+other        : 0
+
+per format:
+  wav   total= 400 match= 396 stricter=   3 inconsistent=   1 other=   0
+  flac  total= 300 match= 207 stricter=  51 inconsistent=  42 other=   0
+  mp3   total= 300 match= 245 stricter=  14 inconsistent=  41 other=   0
