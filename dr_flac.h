@@ -1008,6 +1008,17 @@ Return Value
 */
 DRFLAC_API drflac_bool32 drflac_seek_to_pcm_frame(drflac* pFlac, drflac_uint64 pcmFrameIndex);
 
+#if defined(DRFLAC_USE_PTHREAD)
+/*
+Block-parallel whole-stream decode. FLAC frames are independent once their headers are parsed, so
+the stream is split into <threadCount> PCM-frame ranges, each decoded by its own lightweight decoder
+opened on the same memory image. Workers write directly into disjoint slices of <pBufferOut>, so no
+secondary full-size output buffer is allocated. Output is sample-for-sample identical to the serial
+decoder. Returns the number of PCM frames decoded, or 0 on failure. Requires DRFLAC_USE_PTHREAD.
+*/
+DRFLAC_API drflac_uint64 drflac_decode_memory_pcm_frames_s32_parallel(const void* data, size_t dataSize, unsigned int threadCount, drflac_int32* pBufferOut, unsigned int* channelsOut, unsigned int* sampleRateOut, drflac_uint64* totalPCMFrameCountOut);
+#endif
+
 
 
 #ifndef DR_FLAC_NO_STDIO
@@ -1302,6 +1313,11 @@ DRFLAC_API drflac_bool32 drflac_next_cuesheet_track(drflac_cuesheet_track_iterat
 
 #include <stdlib.h>
 #include <string.h>
+
+/* Optional block-parallel decoding. Define DRFLAC_USE_PTHREAD (and link -lpthread) to enable. */
+#if defined(DRFLAC_USE_PTHREAD)
+    #include <pthread.h>
+#endif
 
 /* Inline */
 #ifdef _MSC_VER
@@ -3675,10 +3691,17 @@ static DRFLAC_INLINE drflac_bool32 drflac__seek_rice_parts(drflac_bs* bs, drflac
 
 static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar_zeroorder(drflac_bs* bs, drflac_uint32 bitsPerSample, drflac_uint32 count, drflac_uint8 riceParam, drflac_uint32 order, drflac_int32 shift, const drflac_int32* coefficients, drflac_int32* pSamplesOut)
 {
-    drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
-    drflac_uint32 zeroCountPart0;
-    drflac_uint32 riceParamPart0;
+    /*
+    Sign flip-flop lookup table. Indexing by the low bit of the folded Rice code removes a branch
+    per sample. It is a 2-entry const table in .rodata so it requires no heap allocation.
+    */
+    static const drflac_uint32 signMaskTable[2] = {0x00000000u, 0xFFFFFFFFu};
+    drflac_uint32 zeroCountPart0, zeroCountPart1, zeroCountPart2, zeroCountPart3;
+    drflac_uint32 zeroCountPart4, zeroCountPart5, zeroCountPart6, zeroCountPart7;
+    drflac_uint32 riceParamPart0, riceParamPart1, riceParamPart2, riceParamPart3;
+    drflac_uint32 riceParamPart4, riceParamPart5, riceParamPart6, riceParamPart7;
     drflac_uint32 riceParamMask;
+    drflac_int32* pSamplesOutEnd;
     drflac_uint32 i;
 
     DRFLAC_ASSERT(bs != NULL);
@@ -3691,21 +3714,55 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar_zeroorde
 
     riceParamMask  = (drflac_uint32)~((~0UL) << riceParam);
 
-    i = 0;
+    /*
+    8-way unrolled main loop. Batching the bitstream reads keeps the cache hot in registers and
+    removes per-sample loop bookkeeping. Store order is preserved so output is bit-for-bit identical.
+    */
+    pSamplesOutEnd = pSamplesOut + (count & ~7u);
+    while (pSamplesOut < pSamplesOutEnd) {
+        if (!drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart0, &riceParamPart0) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart1, &riceParamPart1) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart2, &riceParamPart2) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart3, &riceParamPart3) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart4, &riceParamPart4) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart5, &riceParamPart5) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart6, &riceParamPart6) ||
+            !drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart7, &riceParamPart7)) {
+            return DRFLAC_FALSE;
+        }
+
+        riceParamPart0 = (riceParamPart0 & riceParamMask) | (zeroCountPart0 << riceParam);
+        riceParamPart1 = (riceParamPart1 & riceParamMask) | (zeroCountPart1 << riceParam);
+        riceParamPart2 = (riceParamPart2 & riceParamMask) | (zeroCountPart2 << riceParam);
+        riceParamPart3 = (riceParamPart3 & riceParamMask) | (zeroCountPart3 << riceParam);
+        riceParamPart4 = (riceParamPart4 & riceParamMask) | (zeroCountPart4 << riceParam);
+        riceParamPart5 = (riceParamPart5 & riceParamMask) | (zeroCountPart5 << riceParam);
+        riceParamPart6 = (riceParamPart6 & riceParamMask) | (zeroCountPart6 << riceParam);
+        riceParamPart7 = (riceParamPart7 & riceParamMask) | (zeroCountPart7 << riceParam);
+
+        pSamplesOut[0] = (drflac_int32)((riceParamPart0 >> 1) ^ signMaskTable[riceParamPart0 & 1u]);
+        pSamplesOut[1] = (drflac_int32)((riceParamPart1 >> 1) ^ signMaskTable[riceParamPart1 & 1u]);
+        pSamplesOut[2] = (drflac_int32)((riceParamPart2 >> 1) ^ signMaskTable[riceParamPart2 & 1u]);
+        pSamplesOut[3] = (drflac_int32)((riceParamPart3 >> 1) ^ signMaskTable[riceParamPart3 & 1u]);
+        pSamplesOut[4] = (drflac_int32)((riceParamPart4 >> 1) ^ signMaskTable[riceParamPart4 & 1u]);
+        pSamplesOut[5] = (drflac_int32)((riceParamPart5 >> 1) ^ signMaskTable[riceParamPart5 & 1u]);
+        pSamplesOut[6] = (drflac_int32)((riceParamPart6 >> 1) ^ signMaskTable[riceParamPart6 & 1u]);
+        pSamplesOut[7] = (drflac_int32)((riceParamPart7 >> 1) ^ signMaskTable[riceParamPart7 & 1u]);
+
+        pSamplesOut += 8;
+    }
+
+    i = (count & ~7u);
     while (i < count) {
-        /* Rice extraction. */
         if (!drflac__read_rice_parts_x1(bs, riceParam, &zeroCountPart0, &riceParamPart0)) {
             return DRFLAC_FALSE;
         }
 
-        /* Rice reconstruction. */
-        riceParamPart0 &= riceParamMask;
-        riceParamPart0 |= (zeroCountPart0 << riceParam);
-        riceParamPart0  = (riceParamPart0 >> 1) ^ t[riceParamPart0 & 0x01];
-
-        pSamplesOut[i] = riceParamPart0;
+        riceParamPart0 = (riceParamPart0 & riceParamMask) | (zeroCountPart0 << riceParam);
+        pSamplesOut[0] = (drflac_int32)((riceParamPart0 >> 1) ^ signMaskTable[riceParamPart0 & 1u]);
 
         i += 1;
+        pSamplesOut += 1;
     }
 
     return DRFLAC_TRUE;
@@ -3713,7 +3770,8 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar_zeroorde
 
 static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar(drflac_bs* bs, drflac_uint32 bitsPerSample, drflac_uint32 count, drflac_uint8 riceParam, drflac_uint32 lpcOrder, drflac_int32 lpcShift, drflac_uint32 lpcPrecision, const drflac_int32* coefficients, drflac_int32* pSamplesOut)
 {
-    drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
+    /* Shared .rodata sign-flip LUT: no per-call stack initialization, no heap allocation. */
+    static const drflac_uint32 t[2] = {0x00000000u, 0xFFFFFFFFu};
     drflac_uint32 zeroCountPart0 = 0;
     drflac_uint32 zeroCountPart1 = 0;
     drflac_uint32 zeroCountPart2 = 0;
@@ -3904,7 +3962,7 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__sse41_32(drflac
     __m128i samples128_8;
     __m128i riceParamMask128;
 
-    const drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
+    static const drflac_uint32 t[2] = {0x00000000u, 0xFFFFFFFFu};
 
     riceParamMask    = (drflac_uint32)~((~0UL) << riceParam);
     riceParamMask128 = _mm_set1_epi32(riceParamMask);
@@ -4110,7 +4168,7 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__sse41_64(drflac
     __m128i prediction128;
     __m128i riceParamMask128;
 
-    const drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
+    static const drflac_uint32 t[2] = {0x00000000u, 0xFFFFFFFFu};
 
     DRFLAC_ASSERT(order <= 12);
 
@@ -4427,7 +4485,7 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__neon_32(drflac_
     int32x2_t shift64;
     uint32x4_t one128;
 
-    const drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
+    static const drflac_uint32 t[2] = {0x00000000u, 0xFFFFFFFFu};
 
     riceParamMask    = (drflac_uint32)~((~0UL) << riceParam);
     riceParamMask128 = vdupq_n_u32(riceParamMask);
@@ -4619,7 +4677,7 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__neon_64(drflac_
     uint32x4_t zeroCountPart128;
     uint32x4_t riceParamPart128;
 
-    const drflac_uint32 t[2] = {0x00000000, 0xFFFFFFFF};
+    static const drflac_uint32 t[2] = {0x00000000u, 0xFFFFFFFFu};
 
     riceParamMask    = (drflac_uint32)~((~0UL) << riceParam);
     riceParamMask128 = vdupq_n_u32(riceParamMask);
@@ -12655,6 +12713,177 @@ DRFLAC_API drflac_bool32 drflac_seek_to_pcm_frame(drflac* pFlac, drflac_uint64 p
         return wasSuccessful;
     }
 }
+
+#if defined(DRFLAC_USE_PTHREAD)
+typedef struct
+{
+    const void* data;
+    size_t dataSize;
+    drflac_uint64 startFrame;
+    drflac_uint64 frameCount;
+    drflac_uint32 channels;
+    drflac_int32* pBufferOut;
+    drflac_uint64 framesRead;
+} drflac__parallel_work;
+
+static void* drflac__parallel_worker(void* pUserData)
+{
+    drflac__parallel_work* pWork = (drflac__parallel_work*)pUserData;
+    drflac* pFlac;
+    drflac_int32* pDst;
+
+    pWork->framesRead = 0;
+
+    pFlac = drflac_open_memory(pWork->data, pWork->dataSize, NULL);
+    if (pFlac == NULL) {
+        return NULL;
+    }
+
+    if (pWork->startFrame > 0) {
+        if (!drflac_seek_to_pcm_frame(pFlac, pWork->startFrame)) {
+            drflac_close(pFlac);
+            return NULL;
+        }
+    }
+
+    pDst = pWork->pBufferOut + (pWork->startFrame * pWork->channels);
+    /* A short read is valid for the final range when STREAMINFO overstates the true frame count. */
+    pWork->framesRead = drflac_read_pcm_frames_s32(pFlac, pWork->frameCount, pDst);
+
+    drflac_close(pFlac);
+    return NULL;
+}
+
+DRFLAC_API drflac_uint64 drflac_decode_memory_pcm_frames_s32_parallel(const void* data, size_t dataSize, unsigned int threadCount, drflac_int32* pBufferOut, unsigned int* channelsOut, unsigned int* sampleRateOut, drflac_uint64* totalPCMFrameCountOut)
+{
+    drflac* pProbe;
+    drflac_uint64 totalFrames;
+    drflac_uint32 channels;
+    drflac_uint64 framesPerThread;
+    drflac__parallel_work* pWorkItems;
+    pthread_t* pThreads;
+    drflac_uint64 i;
+    drflac_bool32 allOk;
+    drflac_uint64 actualFrames;
+
+    if (data == NULL || pBufferOut == NULL || threadCount == 0) {
+        return 0;
+    }
+
+    pProbe = drflac_open_memory(data, dataSize, NULL);
+    if (pProbe == NULL) {
+        return 0;
+    }
+
+    channels    = pProbe->channels;
+    /*
+    STREAMINFO's declared total is used to partition the work. It can overstate the true length in some
+    tagged streams; workers tolerate short reads, and the returned count reflects what was decoded.
+    */
+    totalFrames = pProbe->totalPCMFrameCount;
+
+    /*
+    Detect streams whose STREAMINFO overstates the real length by probing whether the final PCM frame is
+    actually reachable. A failed seek means the declared total is wrong; in that case decode serially so
+    the output is still correct. This probe is a cheap seek-table/binary lookup on well-formed streams.
+    */
+    if (totalFrames > 0 && !drflac_seek_to_pcm_frame(pProbe, totalFrames - 1)) {
+        drflac_int32* pSerial;
+        drflac_uint64 serialFrames;
+
+        drflac_close(pProbe);
+        pProbe = drflac_open_memory(data, dataSize, NULL);
+        if (pProbe == NULL) {
+            return 0;
+        }
+        pSerial = pBufferOut;
+        serialFrames = drflac_read_pcm_frames_s32(pProbe, pProbe->totalPCMFrameCount, pSerial);
+        if (totalPCMFrameCountOut != NULL) {
+            *totalPCMFrameCountOut = serialFrames;
+        }
+        if (channelsOut != NULL) {
+            *channelsOut = channels;
+        }
+        if (sampleRateOut != NULL) {
+            *sampleRateOut = pProbe->sampleRate;
+        }
+        drflac_close(pProbe);
+        return serialFrames;
+    }
+    if (channelsOut != NULL) {
+        *channelsOut = channels;
+    }
+    if (sampleRateOut != NULL) {
+        *sampleRateOut = pProbe->sampleRate;
+    }
+    if (totalPCMFrameCountOut != NULL) {
+        *totalPCMFrameCountOut = totalFrames;
+    }
+    drflac_close(pProbe);
+
+    if (totalFrames == 0) {
+        return 0;
+    }
+
+    /* Don't spawn more threads than there are frames to divide. */
+    if ((drflac_uint64)threadCount > totalFrames) {
+        threadCount = (unsigned int)totalFrames;
+    }
+
+    pWorkItems = (drflac__parallel_work*)DRFLAC_MALLOC(sizeof(drflac__parallel_work) * threadCount);
+    pThreads   = (pthread_t*)DRFLAC_MALLOC(sizeof(pthread_t) * threadCount);
+    if (pWorkItems == NULL || pThreads == NULL) {
+        DRFLAC_FREE(pWorkItems);
+        DRFLAC_FREE(pThreads);
+        return 0;
+    }
+
+    framesPerThread = totalFrames / threadCount;
+    for (i = 0; i < threadCount; ++i) {
+        pWorkItems[i].data        = data;
+        pWorkItems[i].dataSize    = dataSize;
+        pWorkItems[i].channels    = channels;
+        pWorkItems[i].pBufferOut  = pBufferOut;
+        pWorkItems[i].startFrame  = framesPerThread * i;
+        pWorkItems[i].frameCount  = (i == (drflac_uint64)threadCount - 1) ? (totalFrames - pWorkItems[i].startFrame) : framesPerThread;
+        pWorkItems[i].framesRead  = 0;
+    }
+
+    for (i = 0; i < threadCount; ++i) {
+        if (pthread_create(&pThreads[i], NULL, drflac__parallel_worker, &pWorkItems[i]) != 0) {
+            /* Join whatever was started and fail cleanly. */
+            unsigned int started = (unsigned int)i;
+            unsigned int j;
+            for (j = 0; j < started; ++j) {
+                pthread_join(pThreads[j], NULL);
+            }
+            DRFLAC_FREE(pWorkItems);
+            DRFLAC_FREE(pThreads);
+            return 0;
+        }
+    }
+
+    /*
+    Ranges are contiguous, so every non-final range must deliver its full requested count. Only the
+    final range may legitimately be short (or empty) when STREAMINFO overstates the stream length.
+    */
+    allOk = DRFLAC_TRUE;
+    actualFrames = 0;
+    for (i = 0; i < threadCount; ++i) {
+        drflac_bool32 isFinalRange = (i == (drflac_uint64)threadCount - 1);
+        pthread_join(pThreads[i], NULL);
+        if (!isFinalRange && pWorkItems[i].framesRead != pWorkItems[i].frameCount) {
+            allOk = DRFLAC_FALSE;
+        }
+        actualFrames += pWorkItems[i].framesRead;
+    }
+
+    DRFLAC_FREE(pWorkItems);
+    DRFLAC_FREE(pThreads);
+
+    return allOk ? actualFrames : 0;
+}
+#endif
 
 
 
