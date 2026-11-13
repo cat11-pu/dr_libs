@@ -320,6 +320,35 @@ typedef enum
     drwav_container_aiff
 } drwav_container;
 
+/*
+Error codes reported when a malformed or truncated WAV/AIFF file cannot be opened or decoded. DRWAV_ERROR_CODE_NONE
+is reported for a healthy decoder. The numeric values are stable and intended to be switched on directly.
+*/
+typedef enum
+{
+    DRWAV_ERROR_CODE_NONE             = 0,    /* No error. The decoder is healthy. */
+    DRWAV_ERROR_CODE_INVALID_FILE     = 1,    /* The data does not contain a decodable WAV/AIFF container. */
+    DRWAV_ERROR_CODE_TRUNCATED        = 2,    /* The file ended before a chunk or data block was complete. */
+    DRWAV_ERROR_CODE_BAD_FORMAT       = 3,    /* The fmt chunk is missing or carries invalid parameters. */
+    DRWAV_ERROR_CODE_BAD_CHUNK        = 4,    /* A chunk header or size is malformed or inconsistent. */
+    DRWAV_ERROR_CODE_BAD_DATA         = 5,    /* Encoded sample data could not be decoded (e.g. bad ADPCM state). */
+    DRWAV_ERROR_CODE_UNSUPPORTED      = 6,    /* The file uses a format or codec this build cannot decode. */
+    DRWAV_ERROR_CODE_OUT_OF_MEMORY    = 7,    /* A required allocation failed or exceeded the configured limit. */
+    DRWAV_ERROR_CODE_INTERNAL         = 8     /* An unexpected internal condition. Treat as a generic failure. */
+} drwav_error_code;
+
+/*
+Describes the most recent decoder error. <byteOffset> is the position, measured from the start of the input, at
+which the failure was detected. For callback-based decoders it is relative to the initial read position. It is set
+to DRWAV_ERROR_OFFSET_UNKNOWN when the position cannot be determined.
+*/
+#define DRWAV_ERROR_OFFSET_UNKNOWN  ((drwav_uint64)-1)
+typedef struct
+{
+    drwav_error_code code;
+    drwav_uint64     byteOffset;
+} drwav_error_info;
+
 typedef struct
 {
     union
@@ -961,6 +990,9 @@ typedef struct
         drwav_bool8 isLE;   /* Will be set to true if the audio data is little-endian encoded. */
         drwav_bool8 isUnsigned; /* Only used for 8-bit samples. When set to true, will be treated as unsigned. */
     } aiff;
+
+    /* The most recent error encountered while opening or decoding the file. Reset to DRWAV_ERROR_CODE_NONE on success. */
+    drwav_error_info errorInfo;
 } drwav;
 
 
@@ -1278,6 +1310,12 @@ The buffer should contain the contents of the entire wave file, not just the sam
 DRWAV_API drwav_bool32 drwav_init_memory(drwav* pWav, const void* data, size_t dataSize, const drwav_allocation_callbacks* pAllocationCallbacks);
 DRWAV_API drwav_bool32 drwav_init_memory_ex(drwav* pWav, const void* data, size_t dataSize, drwav_chunk_proc onChunk, void* pChunkUserData, drwav_uint32 flags, const drwav_allocation_callbacks* pAllocationCallbacks);
 DRWAV_API drwav_bool32 drwav_init_memory_with_metadata(drwav* pWav, const void* data, size_t dataSize, drwav_uint32 flags, const drwav_allocation_callbacks* pAllocationCallbacks);
+
+/* Same as drwav_init_memory(), but on failure fills *pErrorInfo (when non-NULL) with an error code and byte offset. */
+DRWAV_API drwav_bool32 drwav_init_memory_with_error(drwav* pWav, const void* data, size_t dataSize, const drwav_allocation_callbacks* pAllocationCallbacks, drwav_error_info* pErrorInfo);
+
+/* Returns the most recent error recorded by a decoder and the byte offset at which it occurred. A healthy decoder reports DRWAV_ERROR_CODE_NONE. */
+DRWAV_API drwav_error_info drwav_get_error(drwav* pWav);
 
 /*
 Helper for initializing a writer which outputs data to a memory buffer.
@@ -3167,6 +3205,10 @@ DRWAV_API drwav_uint16 drwav_fmt_get_format(const drwav_fmt* pFMT)
     }
 }
 
+DRWAV_PRIVATE drwav_uint64 drwav__get_stream_position(drwav* pWav);
+DRWAV_PRIVATE void drwav__set_error(drwav* pWav, drwav_error_code code);
+DRWAV_PRIVATE void drwav__clear_error(drwav* pWav);
+
 DRWAV_PRIVATE drwav_bool32 drwav_preinit(drwav* pWav, drwav_read_proc onRead, drwav_seek_proc onSeek, drwav_tell_proc onTell, void* pReadSeekTellUserData, const drwav_allocation_callbacks* pAllocationCallbacks)
 {
     if (pWav == NULL || onRead == NULL || onSeek == NULL) { /* <-- onTell is optional. */
@@ -3184,7 +3226,49 @@ DRWAV_PRIVATE drwav_bool32 drwav_preinit(drwav* pWav, drwav_read_proc onRead, dr
         return DRWAV_FALSE;    /* Invalid allocation callbacks. */
     }
 
+    drwav__clear_error(pWav);
+
     return DRWAV_TRUE;
+}
+
+/*
+Error reporting helpers. Every hard failure on a malformed file funnels through drwav__set_error() so the public
+drwav_error_info always reflects the first detected problem and its byte position.
+*/
+DRWAV_PRIVATE drwav_uint64 drwav__get_stream_position(drwav* pWav)
+{
+    drwav_int64 cursor = 0;
+
+    if (pWav == NULL || pWav->onTell == NULL || !pWav->onTell(pWav->pUserData, &cursor) || cursor < 0) {
+        return DRWAV_ERROR_OFFSET_UNKNOWN;
+    }
+
+    return (drwav_uint64)cursor;
+}
+
+DRWAV_PRIVATE void drwav__set_error(drwav* pWav, drwav_error_code code)
+{
+    if (pWav == NULL) {
+        return;
+    }
+
+    /* Keep the first error recorded; later failures are usually consequences of the first one. */
+    if (pWav->errorInfo.code != DRWAV_ERROR_CODE_NONE) {
+        return;
+    }
+
+    pWav->errorInfo.code = code;
+    pWav->errorInfo.byteOffset = drwav__get_stream_position(pWav);
+}
+
+DRWAV_PRIVATE void drwav__clear_error(drwav* pWav)
+{
+    if (pWav == NULL) {
+        return;
+    }
+
+    pWav->errorInfo.code = DRWAV_ERROR_CODE_NONE;
+    pWav->errorInfo.byteOffset = DRWAV_ERROR_OFFSET_UNKNOWN;
 }
 
 DRWAV_PRIVATE drwav_bool32 drwav_init__internal(drwav* pWav, drwav_chunk_proc onChunk, void* pChunkUserData, drwav_uint32 flags)
@@ -3236,6 +3320,7 @@ DRWAV_PRIVATE drwav_bool32 drwav_init__internal(drwav* pWav, drwav_chunk_proc on
 
     /* The first 4 bytes should be the RIFF identifier. */
     if (drwav__on_read(pWav->onRead, pWav->pUserData, riff, sizeof(riff), &cursor) != sizeof(riff)) {
+        drwav__set_error(pWav, DRWAV_ERROR_CODE_TRUNCATED);
         return DRWAV_FALSE;
     }
 
@@ -3268,6 +3353,7 @@ DRWAV_PRIVATE drwav_bool32 drwav_init__internal(drwav* pWav, drwav_chunk_proc on
     } else if (drwav_fourcc_equal(riff, "FORM")) {
         pWav->container = drwav_container_aiff;
     } else {
+        drwav__set_error(pWav, DRWAV_ERROR_CODE_INVALID_FILE);   /* Unknown or unsupported container. */
         return DRWAV_FALSE;   /* Unknown or unsupported container. */
     }
 
@@ -3813,6 +3899,7 @@ DRWAV_PRIVATE drwav_bool32 drwav_init__internal(drwav* pWav, drwav_chunk_proc on
 
     /* There's some mandatory chunks that must exist. If they were not found in the iteration above we must abort. */
     if (!foundChunk_fmt || !foundChunk_data) {
+        drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_CHUNK);
         return DRWAV_FALSE;
     }
 
@@ -3821,6 +3908,7 @@ DRWAV_PRIVATE drwav_bool32 drwav_init__internal(drwav* pWav, drwav_chunk_proc on
         (fmt.channels      == 0 || fmt.channels      > DRWAV_MAX_CHANNELS       ) ||
         (fmt.bitsPerSample == 0 || fmt.bitsPerSample > DRWAV_MAX_BITS_PER_SAMPLE) ||
         fmt.blockAlign == 0) {
+        drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_FORMAT);
         return DRWAV_FALSE; /* Probably an invalid WAV file. */
     }
 
@@ -5776,6 +5864,41 @@ DRWAV_API drwav_bool32 drwav_init_memory(drwav* pWav, const void* data, size_t d
     return drwav_init_memory_ex(pWav, data, dataSize, NULL, NULL, 0, pAllocationCallbacks);
 }
 
+DRWAV_API drwav_bool32 drwav_init_memory_with_error(drwav* pWav, const void* data, size_t dataSize, const drwav_allocation_callbacks* pAllocationCallbacks, drwav_error_info* pErrorInfo)
+{
+    drwav_bool32 ok;
+
+    if (pErrorInfo != NULL) {
+        pErrorInfo->code = DRWAV_ERROR_CODE_NONE;
+        pErrorInfo->byteOffset = DRWAV_ERROR_OFFSET_UNKNOWN;
+    }
+
+    ok = drwav_init_memory(pWav, data, dataSize, pAllocationCallbacks);
+    if (!ok && pErrorInfo != NULL && pWav != NULL) {
+        *pErrorInfo = pWav->errorInfo;
+        if (pErrorInfo->code == DRWAV_ERROR_CODE_NONE) {
+            /* A failure that was not classified at a specific check (e.g. an I/O/seek problem). Use a generic code. */
+            pErrorInfo->code = DRWAV_ERROR_CODE_INVALID_FILE;
+            pErrorInfo->byteOffset = drwav__get_stream_position(pWav);
+        }
+    }
+
+    return ok;
+}
+
+DRWAV_API drwav_error_info drwav_get_error(drwav* pWav)
+{
+    drwav_error_info empty;
+    empty.code = DRWAV_ERROR_CODE_NONE;
+    empty.byteOffset = DRWAV_ERROR_OFFSET_UNKNOWN;
+
+    if (pWav == NULL) {
+        return empty;
+    }
+
+    return pWav->errorInfo;
+}
+
 DRWAV_API drwav_bool32 drwav_init_memory_ex(drwav* pWav, const void* data, size_t dataSize, drwav_chunk_proc onChunk, void* pChunkUserData, drwav_uint32 flags, const drwav_allocation_callbacks* pAllocationCallbacks)
 {
     if (data == NULL || dataSize == 0) {
@@ -6488,6 +6611,7 @@ DRWAV_PRIVATE drwav_uint64 drwav_read_pcm_frames_s16__msadpcm(drwav* pWav, drwav
 
                 /* The predictor is used as an index into coeff1Table so we'll need to validate to ensure it never overflows. */
                 if (pWav->msadpcm.predictor[0] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[0] >= drwav_countof(coeff2Table)) {
+                    drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_DATA);
                     return totalFramesRead; /* Invalid file. */
                 }
             } else {
@@ -6516,6 +6640,7 @@ DRWAV_PRIVATE drwav_uint64 drwav_read_pcm_frames_s16__msadpcm(drwav* pWav, drwav
                 /* The predictor is used as an index into coeff1Table so we'll need to validate to ensure it never overflows. */
                 if (pWav->msadpcm.predictor[0] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[0] >= drwav_countof(coeff2Table) ||
                     pWav->msadpcm.predictor[1] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[1] >= drwav_countof(coeff2Table)) {
+                    drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_DATA);
                     return totalFramesRead; /* Invalid file. */
                 }
             }
@@ -6571,6 +6696,7 @@ DRWAV_PRIVATE drwav_uint64 drwav_read_pcm_frames_s16__msadpcm(drwav* pWav, drwav
 
                     /* The predictor is read from the file and then indexed into a table. Check that it's in bounds. */
                     if (pWav->msadpcm.predictor[0] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[0] >= drwav_countof(coeff2Table)) {
+                        drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_DATA);
                         return totalFramesRead;
                     }
 
@@ -6599,6 +6725,7 @@ DRWAV_PRIVATE drwav_uint64 drwav_read_pcm_frames_s16__msadpcm(drwav* pWav, drwav
 
                     /* Left. */
                     if (pWav->msadpcm.predictor[0] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[0] >= drwav_countof(coeff2Table)) {
+                        drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_DATA);
                         return totalFramesRead; /* Out of bounds. Invalid file. */
                     }
 
@@ -6612,6 +6739,7 @@ DRWAV_PRIVATE drwav_uint64 drwav_read_pcm_frames_s16__msadpcm(drwav* pWav, drwav
 
                     /* Right. */
                     if (pWav->msadpcm.predictor[1] >= drwav_countof(coeff1Table) || pWav->msadpcm.predictor[1] >= drwav_countof(coeff2Table)) {
+                        drwav__set_error(pWav, DRWAV_ERROR_CODE_BAD_DATA);
                         return totalFramesRead; /* Out of bounds. Invalid file. */
                     }
 

@@ -302,6 +302,37 @@ typedef enum
     DRFLAC_SEEK_END
 } drflac_seek_origin;
 
+/*
+Error codes reported when a malformed or truncated stream cannot be decoded. These are intentionally small, stable
+integers so callers can switch on them directly. DRFLAC_ERROR_CODE_NONE is reported for a healthy decoder.
+*/
+typedef enum
+{
+    DRFLAC_ERROR_CODE_NONE              = 0,    /* No error. The decoder is healthy. */
+    DRFLAC_ERROR_CODE_INVALID_FILE      = 1,    /* The data does not contain a decodable FLAC/Ogg FLAC stream. */
+    DRFLAC_ERROR_CODE_TRUNCATED         = 2,    /* The stream ended before a frame or metadata block was complete. */
+    DRFLAC_ERROR_CODE_BAD_METADATA      = 3,    /* A metadata block is malformed or inconsistent. */
+    DRFLAC_ERROR_CODE_BAD_FRAME_HEADER  = 4,    /* A frame header could not be parsed or contradicts STREAMINFO. */
+    DRFLAC_ERROR_CODE_BAD_RESIDUAL      = 5,    /* Rice/residual data is malformed or a predictor overflowed. */
+    DRFLAC_ERROR_CODE_CRC_MISMATCH      = 6,    /* A frame checksum did not match its data. */
+    DRFLAC_ERROR_CODE_UNSUPPORTED       = 7,    /* The stream uses a feature this build cannot decode. */
+    DRFLAC_ERROR_CODE_OUT_OF_MEMORY     = 8,    /* A required allocation failed or exceeded the configured limit. */
+    DRFLAC_ERROR_CODE_INTERNAL          = 9     /* An unexpected internal condition. Treat as a generic failure. */
+} drflac_error_code;
+
+/*
+Describes the most recent decoder error. <code> is one of the drflac_error_code values and <byteOffset> is the raw
+stream position, measured from the start of the input, at which the failure was detected. For streams opened through
+user callbacks the offset is relative to the initial read position. <byteOffset> is set to DRFLAC_ERROR_OFFSET_UNKNOWN
+when the position cannot be determined.
+*/
+#define DRFLAC_ERROR_OFFSET_UNKNOWN  ((drflac_uint64)-1)
+typedef struct
+{
+    drflac_error_code code;
+    drflac_uint64     byteOffset;
+} drflac_error_info;
+
 /* The order of members in this structure is important because we map this directly to the raw data within the SEEKTABLE metadata block. */
 typedef struct
 {
@@ -698,6 +729,9 @@ typedef struct
     drflac_bool32 _noSeekTableSeek    : 1;
     drflac_bool32 _noBinarySearchSeek : 1;
     drflac_bool32 _noBruteForceSeek   : 1;
+
+    /* The most recent error encountered while opening or decoding the stream. Reset to DRFLAC_ERROR_CODE_NONE on success. */
+    drflac_error_info errorInfo;
 
     /* The bit streamer. The raw FLAC data is fed through this object. */
     drflac_bs bs;
@@ -1153,6 +1187,24 @@ drflac_open()
 drflac_close()
 */
 DRFLAC_API drflac* drflac_open_memory_with_metadata(const void* pData, size_t dataSize, drflac_meta_proc onMeta, void* pUserData, const drflac_allocation_callbacks* pAllocationCallbacks);
+
+/*
+Same as drflac_open_memory(), but reports a structured error when the stream cannot be opened.
+
+pErrorInfo (out, optional)
+    When opening fails this receives an error code and the byte offset at which the problem was detected. It is left
+    untouched when the decoder opens successfully. Pass NULL to ignore. The byte offset is relative to the start of
+    pData and uses DRFLAC_ERROR_OFFSET_UNKNOWN when the position cannot be determined.
+*/
+DRFLAC_API drflac* drflac_open_memory_ex(const void* pData, size_t dataSize, const drflac_allocation_callbacks* pAllocationCallbacks, drflac_error_info* pErrorInfo);
+
+/*
+Returns the most recent error recorded by a decoder and the byte offset at which it occurred. The returned structure
+is owned by the decoder and remains valid until the next decode call or drflac_close(). A healthy decoder reports
+DRFLAC_ERROR_CODE_NONE.
+*/
+DRFLAC_API drflac_error_info drflac_get_error(drflac* pFlac);
+
 
 
 
@@ -2955,6 +3007,72 @@ static drflac_bool32 drflac__seek_to_byte(drflac_bs* bs, drflac_uint64 offsetFro
 }
 
 
+/*
+Error reporting helpers. Every hard failure on a malformed stream funnels through drflac__set_error() so the public
+drflac_error_info always reflects the first detected problem and its byte position.
+*/
+static drflac_uint64 drflac__get_stream_position(drflac* pFlac)
+{
+    drflac_int64 cursor = 0;
+
+    if (pFlac == NULL || pFlac->bs.onTell == NULL || !pFlac->bs.onTell(pFlac->bs.pUserData, &cursor)) {
+        return DRFLAC_ERROR_OFFSET_UNKNOWN;
+    }
+
+    if (cursor < 0) {
+        return DRFLAC_ERROR_OFFSET_UNKNOWN;
+    }
+
+    return (drflac_uint64)cursor;
+}
+
+static void drflac__set_error(drflac* pFlac, drflac_error_code code)
+{
+    if (pFlac == NULL) {
+        return;
+    }
+
+    /* Keep the first error recorded for a stream; later failures are usually consequences of the first one. */
+    if (pFlac->errorInfo.code != DRFLAC_ERROR_CODE_NONE) {
+        return;
+    }
+
+    pFlac->errorInfo.code = code;
+    pFlac->errorInfo.byteOffset = drflac__get_stream_position(pFlac);
+}
+
+static void drflac__clear_error(drflac* pFlac)
+{
+    if (pFlac == NULL) {
+        return;
+    }
+
+    pFlac->errorInfo.code = DRFLAC_ERROR_CODE_NONE;
+    pFlac->errorInfo.byteOffset = DRFLAC_ERROR_OFFSET_UNKNOWN;
+}
+
+/*
+Returns DRFLAC_TRUE when the underlying stream has been fully consumed (a normal end-of-stream condition) rather than
+halting on malformed data. Only memory-backed decoders can answer this reliably; for callback streams we conservatively
+report "not at end" so genuine errors are never swallowed.
+*/
+static drflac_bool32 drflac__stream_at_end(drflac* pFlac)
+{
+    drflac_uint64 position;
+
+    if (pFlac == NULL || pFlac->memoryStream.data == NULL) {
+        return DRFLAC_FALSE;
+    }
+
+    position = drflac__get_stream_position(pFlac);
+    if (position == DRFLAC_ERROR_OFFSET_UNKNOWN) {
+        return DRFLAC_FALSE;
+    }
+
+    return position >= (drflac_uint64)pFlac->memoryStream.dataSize ? DRFLAC_TRUE : DRFLAC_FALSE;
+}
+
+
 static drflac_result drflac__read_utf8_coded_number(drflac_bs* bs, drflac_uint64* pNumberOut, drflac_uint8* pCRCOut)
 {
     drflac_uint8 crc;
@@ -3045,7 +3163,7 @@ The next two functions are responsible for calculating the prediction.
 When the bits per sample is >16 we need to use 64-bit integer arithmetic because otherwise we'll run out of precision. It's
 safe to assume this will be slower on 32-bit platforms so we use a more optimal solution when the bits per sample is <=16.
 */
-#if defined(__clang__)
+#if defined(__clang__) || (defined(__GNUC__) && !defined(__clang__))
 __attribute__((no_sanitize("signed-integer-overflow")))
 #endif
 static DRFLAC_INLINE drflac_int32 drflac__calculate_prediction_32_s32(drflac_uint32 order, drflac_int32 shift, const drflac_int32* coefficients, drflac_int32* pDecodedSamples)
@@ -3275,6 +3393,62 @@ static DRFLAC_INLINE drflac_int32 drflac__calculate_prediction_64_s32(drflac_uin
 #endif
 
     return (drflac_int32)(prediction >> shift);
+}
+
+/*
+Safe version of the 32-bit LPC predictor used on the s32 decode path.
+
+The fast drflac__calculate_prediction_32_s32() routine performs signed 32-bit arithmetic which is undefined
+behavior on overflow. Valid FLAC streams can never overflow because every reconstructed sample is required to fit
+in the subframe's bits-per-sample range, but a malformed stream can feed arbitrary coefficients/residuals into the
+predictor. This routine accumulates in 64 bits and validates that every intermediate product, the running sum and
+the final shifted result stay in range. It returns DRFLAC_FALSE on overflow so the caller can abort the frame
+cleanly instead of invoking undefined behavior.
+*/
+static DRFLAC_INLINE drflac_bool32 drflac__try_calculate_prediction_32_s32(drflac_uint32 order, drflac_int32 shift, const drflac_int32* coefficients, drflac_int32* pDecodedSamples, drflac_int32* pPredictionOut)
+{
+    /*
+    Emulate the original 32-bit fixed-point predictor exactly, but without signed integer overflow (which is undefined
+    behavior). Unsigned 32-bit arithmetic wraps modulo 2^32 with well-defined semantics, matching two's-complement
+    signed wrapping on every supported platform, so valid streams produce bit-identical results to the original
+    implementation. The intermediate accumulator is deliberately allowed to wrap; only the final shifted prediction
+    value needs to be representable, and that is guaranteed for any well-formed stream.
+    */
+    drflac_uint32 prediction = 0;
+    drflac_uint32 i;
+
+    DRFLAC_ASSERT(order <= 32);
+    DRFLAC_ASSERT(shift >= 0 && shift < 32);
+
+    for (i = 0; i < order; ++i) {
+        drflac_uint32 coefficient = (drflac_uint32)coefficients[i];
+        drflac_uint32 sample = (drflac_uint32)pDecodedSamples[-(drflac_int32)i - 1];
+        prediction += coefficient * sample;   /* Well-defined unsigned wrap, matching the original signed wrap. */
+    }
+
+    /* Reinterpret the wrapped accumulator as signed and apply the same arithmetic right shift as the fast path. */
+    *pPredictionOut = (drflac_int32)prediction >> shift;
+    return DRFLAC_TRUE;
+}
+
+/*
+Combines a decoded Rice residual (still in its folded unsigned bit pattern) with an LPC prediction to reconstruct one
+32-bit sample. The folded residual is reinterpreted to its signed value, the addition is performed in 64 bits and the
+result is range-checked so malformed streams cannot trigger signed 32-bit overflow (undefined behavior). Returns
+DRFLAC_FALSE when the reconstructed value cannot be represented as a 32-bit sample.
+*/
+static DRFLAC_INLINE drflac_bool32 drflac__reconstruct_sample_s32(drflac_uint32 foldedResidual, drflac_int32 prediction, drflac_int32* pSampleOut)
+{
+    /* The Rice fold stores a signed residual in a uint32 bit pattern; memcpy-free reinterpret via a union-safe cast. */
+    drflac_int32 residual = (drflac_int32)foldedResidual;
+    drflac_int64 reconstructed = (drflac_int64)residual + (drflac_int64)prediction;
+
+    if (reconstructed < (drflac_int64)-2147483648 || reconstructed > (drflac_int64)2147483647) {
+        return DRFLAC_FALSE;
+    }
+
+    *pSampleOut = (drflac_int32)reconstructed;
+    return DRFLAC_TRUE;
 }
 
 
@@ -3764,10 +3938,22 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar(drflac_b
             riceParamPart2  = (riceParamPart2 >> 1) ^ t[riceParamPart2 & 0x01];
             riceParamPart3  = (riceParamPart3 >> 1) ^ t[riceParamPart3 & 0x01];
 
-            pSamplesOut[0] = riceParamPart0 + drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0);
-            pSamplesOut[1] = riceParamPart1 + drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 1);
-            pSamplesOut[2] = riceParamPart2 + drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 2);
-            pSamplesOut[3] = riceParamPart3 + drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 3);
+            /*
+            Each prediction reads previously reconstructed samples, so the four samples must be produced in order:
+            writing pSamplesOut[k] before computing the prediction for k+1 preserves the original sequential data
+            dependency. The overflow-safe reconstruct helper replaces the raw wrapping addition.
+            */
+            {
+                drflac_int32 sample;
+                if (!drflac__reconstruct_sample_s32(riceParamPart0, drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0), &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[0] = sample;
+                if (!drflac__reconstruct_sample_s32(riceParamPart1, drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 1), &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[1] = sample;
+                if (!drflac__reconstruct_sample_s32(riceParamPart2, drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 2), &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[2] = sample;
+                if (!drflac__reconstruct_sample_s32(riceParamPart3, drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 3), &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[3] = sample;
+            }
 
             pSamplesOut += 4;
         }
@@ -3795,10 +3981,23 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar(drflac_b
             riceParamPart2  = (riceParamPart2 >> 1) ^ t[riceParamPart2 & 0x01];
             riceParamPart3  = (riceParamPart3 >> 1) ^ t[riceParamPart3 & 0x01];
 
-            pSamplesOut[0] = riceParamPart0 + drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0);
-            pSamplesOut[1] = riceParamPart1 + drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 1);
-            pSamplesOut[2] = riceParamPart2 + drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 2);
-            pSamplesOut[3] = riceParamPart3 + drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 3);
+            /* Sequential reconstruction: each step depends on the sample written by the previous one. */
+            {
+                drflac_int32 prediction;
+                drflac_int32 sample;
+                if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0, &prediction) ||
+                    !drflac__reconstruct_sample_s32(riceParamPart0, prediction, &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[0] = sample;
+                if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 1, &prediction) ||
+                    !drflac__reconstruct_sample_s32(riceParamPart1, prediction, &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[1] = sample;
+                if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 2, &prediction) ||
+                    !drflac__reconstruct_sample_s32(riceParamPart2, prediction, &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[2] = sample;
+                if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 3, &prediction) ||
+                    !drflac__reconstruct_sample_s32(riceParamPart3, prediction, &sample)) { return DRFLAC_FALSE; }
+                pSamplesOut[3] = sample;
+            }
 
             pSamplesOut += 4;
         }
@@ -3819,9 +4018,23 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__scalar(drflac_b
 
         /* Sample reconstruction. */
         if (drflac__use_64_bit_prediction(bitsPerSample, lpcOrder, lpcPrecision)) {
-            pSamplesOut[0] = riceParamPart0 + drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0);
+            drflac_int32 sample;
+            if (!drflac__reconstruct_sample_s32(riceParamPart0, drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0), &sample)) {
+                return DRFLAC_FALSE;
+            }
+            pSamplesOut[0] = sample;
         } else {
-            pSamplesOut[0] = riceParamPart0 + drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0);
+            drflac_int32 prediction;
+            if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + 0, &prediction)) {
+                return DRFLAC_FALSE;
+            }
+            {
+                drflac_int32 sample;
+                if (!drflac__reconstruct_sample_s32(riceParamPart0, prediction, &sample)) {
+                    return DRFLAC_FALSE;
+                }
+                pSamplesOut[0] = sample;
+            }
         }
 
         i += 1;
@@ -4078,7 +4291,15 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__sse41_32(drflac
         riceParamParts0  = (riceParamParts0 >> 1) ^ t[riceParamParts0 & 0x01];
 
         /* Sample reconstruction. */
-        pDecodedSamples[0] = riceParamParts0 + drflac__calculate_prediction_32_s32(order, shift, coefficients, pDecodedSamples);
+        {
+            drflac_int32 prediction;
+            if (!drflac__try_calculate_prediction_32_s32(order, shift, coefficients, pDecodedSamples, &prediction)) {
+                return DRFLAC_FALSE;
+            }
+            if (!drflac__reconstruct_sample_s32(riceParamParts0, prediction, pDecodedSamples)) {
+                return DRFLAC_FALSE;
+            }
+        }
 
         i += 1;
         pDecodedSamples += 1;
@@ -4268,7 +4489,9 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__sse41_64(drflac
         riceParamParts0  = (riceParamParts0 >> 1) ^ t[riceParamParts0 & 0x01];
 
         /* Sample reconstruction. */
-        pDecodedSamples[0] = riceParamParts0 + drflac__calculate_prediction_64_s32(order, shift, coefficients, pDecodedSamples);
+        if (!drflac__reconstruct_sample_s32(riceParamParts0, drflac__calculate_prediction_64_s32(order, shift, coefficients, pDecodedSamples), pDecodedSamples)) {
+            return DRFLAC_FALSE;
+        }
 
         i += 1;
         pDecodedSamples += 1;
@@ -4588,7 +4811,15 @@ static drflac_bool32 drflac__decode_samples_with_residual__rice__neon_32(drflac_
         riceParamParts[0]  = (riceParamParts[0] >> 1) ^ t[riceParamParts[0] & 0x01];
 
         /* Sample reconstruction. */
-        pDecodedSamples[0] = riceParamParts[0] + drflac__calculate_prediction_32_s32(order, shift, coefficients, pDecodedSamples);
+        {
+            drflac_int32 prediction;
+            if (!drflac__try_calculate_prediction_32_s32(order, shift, coefficients, pDecodedSamples, &prediction)) {
+                return DRFLAC_FALSE;
+            }
+            if (!drflac__reconstruct_sample_s32(riceParamParts[0], prediction, pDecodedSamples)) {
+                return DRFLAC_FALSE;
+            }
+        }
 
         i += 1;
         pDecodedSamples += 1;
@@ -4849,10 +5080,27 @@ static drflac_bool32 drflac__decode_samples_with_residual__unencoded(drflac_bs* 
             pSamplesOut[i] = 0;
         }
 
-        if (drflac__use_64_bit_prediction(bitsPerSample, lpcOrder, lpcPrecision)) {
-            pSamplesOut[i] += drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + i);
-        } else {
-            pSamplesOut[i] += drflac__calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + i);
+        {
+            /*
+            Reconstruct in 64 bits and validate the result. A malformed stream can produce a residual/prediction pair
+            whose sum does not fit in a 32-bit sample; performing the addition in 32 bits would be signed overflow
+            (undefined behavior), so the overflow is detected and turned into a clean frame failure instead.
+            */
+            drflac_int32 prediction;
+            drflac_int64 reconstructed;
+            if (drflac__use_64_bit_prediction(bitsPerSample, lpcOrder, lpcPrecision)) {
+                prediction = drflac__calculate_prediction_64_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + i);
+            } else {
+                if (!drflac__try_calculate_prediction_32_s32(lpcOrder, lpcShift, coefficients, pSamplesOut + i, &prediction)) {
+                    return DRFLAC_FALSE;
+                }
+            }
+
+            reconstructed = (drflac_int64)pSamplesOut[i] + (drflac_int64)prediction;
+            if (reconstructed < (drflac_int64)-2147483648 || reconstructed > (drflac_int64)2147483647) {
+                return DRFLAC_FALSE;
+            }
+            pSamplesOut[i] = (drflac_int32)reconstructed;
         }
     }
 
@@ -5891,6 +6139,14 @@ static drflac_bool32 drflac__read_and_decode_next_flac_frame(drflac* pFlac)
 
         if (!drflac__read_next_flac_frame_header(&pFlac->bs, pFlac->bitsPerSample, &pFlac->currentFLACFrame.header)) {
             DRFLAC_ZERO_MEMORY(pFlac->currentFLACFrame.subframes, sizeof(pFlac->currentFLACFrame.subframes));
+            /*
+            Reaching the end of the input while looking for the next frame is the normal stop condition for
+            drflac_read_pcm_frames_*(), so it must not be recorded as an error. A failure with unconsumed bytes
+            still present means a truncated or malformed frame header.
+            */
+            if (!drflac__stream_at_end(pFlac)) {
+                drflac__set_error(pFlac, DRFLAC_ERROR_CODE_BAD_FRAME_HEADER);
+            }
             return DRFLAC_FALSE;
         }
 
@@ -5900,10 +6156,18 @@ static drflac_bool32 drflac__read_and_decode_next_flac_frame(drflac* pFlac)
             if (result == DRFLAC_CRC_MISMATCH) {
                 continue;   /* CRC mismatch. Skip to the next frame. */
             } else {
+                if (result == DRFLAC_AT_END || result == DRFLAC_END_OF_FILE) {
+                    drflac__set_error(pFlac, DRFLAC_ERROR_CODE_TRUNCATED);
+                } else if (result == DRFLAC_OUT_OF_MEMORY) {
+                    drflac__set_error(pFlac, DRFLAC_ERROR_CODE_OUT_OF_MEMORY);
+                } else {
+                    drflac__set_error(pFlac, DRFLAC_ERROR_CODE_BAD_RESIDUAL);
+                }
                 return DRFLAC_FALSE;
             }
         }
 
+        drflac__clear_error(pFlac);
         return DRFLAC_TRUE;
     }
 }
@@ -6710,6 +6974,7 @@ static void drflac__free_default(void* p, void* pUserData)
     (void)pUserData;
     DRFLAC_FREE(p);
 }
+
 
 
 static void* drflac__malloc_from_callbacks(size_t sz, const drflac_allocation_callbacks* pAllocationCallbacks)
@@ -8459,6 +8724,7 @@ static void drflac__init_from_info(drflac* pFlac, const drflac_init_info* pInit)
     pFlac->bitsPerSample           = (drflac_uint8)pInit->bitsPerSample;
     pFlac->totalPCMFrameCount      = pInit->totalPCMFrameCount;
     pFlac->container               = pInit->container;
+    drflac__clear_error(pFlac);
 }
 
 
@@ -9521,6 +9787,68 @@ DRFLAC_API drflac* drflac_open_memory(const void* pData, size_t dataSize, const 
     }
 
     return pFlac;
+}
+
+DRFLAC_API drflac* drflac_open_memory_ex(const void* pData, size_t dataSize, const drflac_allocation_callbacks* pAllocationCallbacks, drflac_error_info* pErrorInfo)
+{
+    drflac__memory_stream memoryStream;
+    drflac* pFlac;
+
+    if (pErrorInfo != NULL) {
+        pErrorInfo->code = DRFLAC_ERROR_CODE_NONE;
+        pErrorInfo->byteOffset = DRFLAC_ERROR_OFFSET_UNKNOWN;
+    }
+
+    memoryStream.data = (const drflac_uint8*)pData;
+    memoryStream.dataSize = dataSize;
+    memoryStream.currentReadPos = 0;
+    pFlac = drflac_open(drflac__on_read_memory, drflac__on_seek_memory, drflac__on_tell_memory, &memoryStream, pAllocationCallbacks);
+    if (pFlac == NULL) {
+        if (pErrorInfo != NULL) {
+            /*
+            The decoder object is gone, but the local memory stream still holds the byte position where opening
+            failed. Report it together with a generic invalid-file code (truncation when the cursor reached EOF).
+            */
+            pErrorInfo->byteOffset = (drflac_uint64)memoryStream.currentReadPos;
+            if (memoryStream.currentReadPos >= memoryStream.dataSize) {
+                pErrorInfo->code = DRFLAC_ERROR_CODE_TRUNCATED;
+            } else {
+                pErrorInfo->code = DRFLAC_ERROR_CODE_INVALID_FILE;
+            }
+        }
+        return NULL;
+    }
+
+    pFlac->memoryStream = memoryStream;
+    drflac__clear_error(pFlac);
+
+    /* This is an awful hack... */
+#ifndef DR_FLAC_NO_OGG
+    if (pFlac->container == drflac_container_ogg)
+    {
+        drflac_oggbs* oggbs = (drflac_oggbs*)pFlac->_oggbs;
+        oggbs->pUserData = &pFlac->memoryStream;
+    }
+    else
+#endif
+    {
+        pFlac->bs.pUserData = &pFlac->memoryStream;
+    }
+
+    return pFlac;
+}
+
+DRFLAC_API drflac_error_info drflac_get_error(drflac* pFlac)
+{
+    drflac_error_info empty;
+    empty.code = DRFLAC_ERROR_CODE_NONE;
+    empty.byteOffset = DRFLAC_ERROR_OFFSET_UNKNOWN;
+
+    if (pFlac == NULL) {
+        return empty;
+    }
+
+    return pFlac->errorInfo;
 }
 
 DRFLAC_API drflac* drflac_open_memory_with_metadata(const void* pData, size_t dataSize, drflac_meta_proc onMeta, void* pUserData, const drflac_allocation_callbacks* pAllocationCallbacks)

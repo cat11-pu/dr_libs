@@ -324,6 +324,34 @@ typedef enum
     DRMP3_SEEK_END
 } drmp3_seek_origin;
 
+/*
+Error codes reported when a malformed or truncated MP3 stream cannot be opened or decoded. DRMP3_ERROR_CODE_NONE is
+reported for a healthy decoder. The numeric values are stable and intended to be switched on directly.
+*/
+typedef enum
+{
+    DRMP3_ERROR_CODE_NONE          = 0,    /* No error. The decoder is healthy. */
+    DRMP3_ERROR_CODE_INVALID_FILE  = 1,    /* The data does not contain a decodable MP3 stream. */
+    DRMP3_ERROR_CODE_TRUNCATED     = 2,    /* The stream ended before a frame was complete. */
+    DRMP3_ERROR_CODE_BAD_FRAME     = 3,    /* A frame header is invalid or its payload cannot be parsed. */
+    DRMP3_ERROR_CODE_BAD_TAG       = 4,    /* An ID3/VBR/Lyrics tag is malformed or inconsistent. */
+    DRMP3_ERROR_CODE_UNSUPPORTED   = 5,    /* The stream uses a feature this build cannot decode. */
+    DRMP3_ERROR_CODE_OUT_OF_MEMORY = 6,    /* A required allocation failed or exceeded the configured limit. */
+    DRMP3_ERROR_CODE_INTERNAL      = 7     /* An unexpected internal condition. Treat as a generic failure. */
+} drmp3_error_code;
+
+/*
+Describes the most recent decoder error. <byteOffset> is the position, measured from the start of the input, at which
+the failure was detected. For callback-based decoders it is relative to the initial read position. It is set to
+DRMP3_ERROR_OFFSET_UNKNOWN when the position cannot be determined.
+*/
+#define DRMP3_ERROR_OFFSET_UNKNOWN  ((drmp3_uint64)-1)
+typedef struct
+{
+    drmp3_error_code code;
+    drmp3_uint64     byteOffset;
+} drmp3_error_info;
+
 typedef struct
 {
     drmp3_uint64 seekPosInBytes;        /* Points to the first byte of an MP3 frame. */
@@ -440,6 +468,9 @@ typedef struct
         size_t dataSize;
         size_t currentReadPos;
     } memory;   /* Only used for decoders that were opened against a block of memory. */
+
+    /* The most recent error encountered while opening or decoding the stream. Reset to DRMP3_ERROR_CODE_NONE on success. */
+    drmp3_error_info errorInfo;
 } drmp3;
 
 /*
@@ -468,6 +499,12 @@ The buffer should contain the contents of the entire MP3 file.
 */
 DRMP3_API drmp3_bool32 drmp3_init_memory_with_metadata(drmp3* pMP3, const void* pData, size_t dataSize, drmp3_meta_proc onMeta, void* pUserDataMeta, const drmp3_allocation_callbacks* pAllocationCallbacks);
 DRMP3_API drmp3_bool32 drmp3_init_memory(drmp3* pMP3, const void* pData, size_t dataSize, const drmp3_allocation_callbacks* pAllocationCallbacks);
+
+/* Same as drmp3_init_memory(), but on failure fills *pErrorInfo (when non-NULL) with an error code and byte offset. */
+DRMP3_API drmp3_bool32 drmp3_init_memory_with_error(drmp3* pMP3, const void* pData, size_t dataSize, const drmp3_allocation_callbacks* pAllocationCallbacks, drmp3_error_info* pErrorInfo);
+
+/* Returns the most recent error recorded by a decoder and the byte offset at which it occurred. A healthy decoder reports DRMP3_ERROR_CODE_NONE. */
+DRMP3_API drmp3_error_info drmp3_get_error(drmp3* pMP3);
 
 #ifndef DR_MP3_NO_STDIO
 /*
@@ -2638,6 +2675,50 @@ static drmp3_allocation_callbacks drmp3_copy_allocation_callbacks_or_defaults(co
     }
 }
 
+/*
+Error reporting helpers. Every hard failure on a malformed stream funnels through drmp3__set_error() so the public
+drmp3_error_info always reflects the first detected problem and its byte position.
+*/
+static drmp3_uint64 drmp3__get_stream_position(drmp3* pMP3)
+{
+    if (pMP3 == NULL) {
+        return DRMP3_ERROR_OFFSET_UNKNOWN;
+    }
+
+    /* Memory-backed decoders track the cursor directly; callback decoders expose it through onTell when available. */
+    if (pMP3->memory.pData != NULL) {
+        return (drmp3_uint64)pMP3->memory.currentReadPos;
+    }
+
+    /* Callback decoders maintain a running cursor; it is the best available position without an onTell handle. */
+    return (pMP3->streamCursor <= (drmp3_uint64)0x7FFFFFFFFFFFFFFF) ? pMP3->streamCursor : DRMP3_ERROR_OFFSET_UNKNOWN;
+}
+
+static void drmp3__set_error(drmp3* pMP3, drmp3_error_code code)
+{
+    if (pMP3 == NULL) {
+        return;
+    }
+
+    /* Keep the first error recorded; later failures are usually consequences of the first one. */
+    if (pMP3->errorInfo.code != DRMP3_ERROR_CODE_NONE) {
+        return;
+    }
+
+    pMP3->errorInfo.code = code;
+    pMP3->errorInfo.byteOffset = drmp3__get_stream_position(pMP3);
+}
+
+static void drmp3__clear_error(drmp3* pMP3)
+{
+    if (pMP3 == NULL) {
+        return;
+    }
+
+    pMP3->errorInfo.code = DRMP3_ERROR_CODE_NONE;
+    pMP3->errorInfo.byteOffset = DRMP3_ERROR_OFFSET_UNKNOWN;
+}
+
 
 
 static size_t drmp3__on_read(drmp3* pMP3, void* pBufferOut, size_t bytesToRead)
@@ -2988,6 +3069,7 @@ static drmp3_bool32 drmp3_init_internal(drmp3* pMP3, drmp3_read_proc onRead, drm
     pMP3->delayInPCMFrames   = 0;
     pMP3->paddingInPCMFrames = 0;
     pMP3->totalPCMFrameCount = DRMP3_UINT64_MAX;
+    drmp3__clear_error(pMP3);
 
     /* We'll first check for trailing tags. */
     #if 1
@@ -3428,6 +3510,7 @@ static drmp3_bool32 drmp3_init_internal(drmp3* pMP3, drmp3_read_proc onRead, drm
         #endif
     } else {
         /* Not a valid MP3 stream. */
+        drmp3__set_error(pMP3, DRMP3_ERROR_CODE_INVALID_FILE);
         drmp3__free_from_callbacks(pMP3->pData, &pMP3->allocationCallbacks);    /* The call above may have allocated memory. Need to make sure it's freed before aborting. */
         return DRMP3_FALSE;
     }
@@ -3555,6 +3638,41 @@ DRMP3_API drmp3_bool32 drmp3_init_memory_with_metadata(drmp3* pMP3, const void* 
 DRMP3_API drmp3_bool32 drmp3_init_memory(drmp3* pMP3, const void* pData, size_t dataSize, const drmp3_allocation_callbacks* pAllocationCallbacks)
 {
     return drmp3_init_memory_with_metadata(pMP3, pData, dataSize, NULL, NULL, pAllocationCallbacks);
+}
+
+DRMP3_API drmp3_bool32 drmp3_init_memory_with_error(drmp3* pMP3, const void* pData, size_t dataSize, const drmp3_allocation_callbacks* pAllocationCallbacks, drmp3_error_info* pErrorInfo)
+{
+    drmp3_bool32 ok;
+
+    if (pErrorInfo != NULL) {
+        pErrorInfo->code = DRMP3_ERROR_CODE_NONE;
+        pErrorInfo->byteOffset = DRMP3_ERROR_OFFSET_UNKNOWN;
+    }
+
+    ok = drmp3_init_memory(pMP3, pData, dataSize, pAllocationCallbacks);
+    if (!ok && pErrorInfo != NULL && pMP3 != NULL) {
+        *pErrorInfo = pMP3->errorInfo;
+        if (pErrorInfo->code == DRMP3_ERROR_CODE_NONE) {
+            /* A failure not classified at a specific check (e.g. an I/O problem). Use a generic code. */
+            pErrorInfo->code = DRMP3_ERROR_CODE_INVALID_FILE;
+            pErrorInfo->byteOffset = drmp3__get_stream_position(pMP3);
+        }
+    }
+
+    return ok;
+}
+
+DRMP3_API drmp3_error_info drmp3_get_error(drmp3* pMP3)
+{
+    drmp3_error_info empty;
+    empty.code = DRMP3_ERROR_CODE_NONE;
+    empty.byteOffset = DRMP3_ERROR_OFFSET_UNKNOWN;
+
+    if (pMP3 == NULL) {
+        return empty;
+    }
+
+    return pMP3->errorInfo;
 }
 
 
